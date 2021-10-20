@@ -1,3 +1,7 @@
 *.fits
 *.jpg
+*.gz
+*.txt
+*.csv
+/disperse*
 /.ipynb_checkpoints
