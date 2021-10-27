@@ -4,5 +4,5 @@
 *.gz
 *.txt
 *.csv
-/disperse*
+/_disperse*
 /.ipynb_checkpoints
