@@ -5,4 +5,6 @@
 *.txt
 *.csv
 /_disperse*
+/MGS
+/SDSS
 /.ipynb_checkpoints
