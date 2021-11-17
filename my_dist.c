@@ -546,7 +546,7 @@ int cosmoD_init(double Om,double Ol,double Ok,double h,double w,char *Filename)
 }
 
 int main(int argc, char const *argv[]) {
-  if (argc != 7) {
+  if (argc != 8) {
     printf("WRONG MY_DIST PARAMS NUM!\n");
     return -1;
   }
@@ -557,6 +557,7 @@ int main(int argc, char const *argv[]) {
   double h = atof(argv[4]);
   const char* in = argv[5];
   const char* out = argv[6];
+  char mode = argv[7][0];
 
   double z;
   double dist;
@@ -575,10 +576,18 @@ int main(int argc, char const *argv[]) {
   int len = 100;
   char line[len];
 
-  while(fgets(line, len, fin)) {
-    z = atof(line);
-    dist = cosmoD_z2d(z);
-    fprintf(fout, "%.10f\n", dist);
+  if (mode == 's') {
+    while(fgets(line, len, fin)) {
+      z = atof(line);
+      dist = cosmoD_z2d(z);
+      fprintf(fout, "%.10f\n", dist);
+    }
+  } else {
+    while(fgets(line, len, fin)) {
+      dist = atof(line);
+      z = cosmoD_d2z(dist);
+      fprintf(fout, "%.10f\n", z);
+    }
   }
 
   return 0;
