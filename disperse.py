@@ -241,7 +241,7 @@ class Disperse3D:
         self, disperse_sigma, disperse_smooth, disperse_board, disprese_asmb_angle=0,
         in_cart_coords=True
     ):
-        self.disperse_sigma = disperse_sigma
+        self.disperse_sigma = disperse_sigma if disperse_sigma != int(disperse_sigma) else int(disperse_sigma)
         self.disperse_smooth = disperse_smooth
         self.disperse_board = disperse_board
         self.disprese_asmb_angle = disprese_asmb_angle
@@ -348,9 +348,12 @@ class Disperse3D:
                 self.maxs.append(cp.copy())
         self.maxs = sorted(self.maxs, key=lambda x: -x['value'])
 
-    def count_conn_maxmap(self, cl_conn_rads, cl_maxmap_rads):
-        cl_conn = [0] * self.clusters.shape[0]
-        cl_maxmap = [0] * self.clusters.shape[0]
+    def count_conn_maxmap(self, cl_conn_rads, cl_maxmap_rads, clusters=None):
+        if clusters is None:
+            clusters = self.clusters
+
+        cl_conn = [0] * clusters.shape[0]
+        cl_maxmap = [0] * clusters.shape[0]
 
         fils_conn = [0] * len(self.fils)
         maxs_maxmap = [0] * len(self.maxs)
@@ -358,10 +361,14 @@ class Disperse3D:
         count_fils = 0
         count_maxs = 0
 
+        CX = clusters['CX']
+        CY = clusters['CY']
+        CZ = clusters['CZ']
+
         for i in range(self.clusters.shape[0]):
-            x3 = self.clusters.iloc[i]['CX']
-            y3 = self.clusters.iloc[i]['CY']
-            z3 = self.clusters.iloc[i]['CZ']
+            x3 = CX[i]
+            y3 = CY[i]
+            z3 = CZ[i]
             r_fil = cl_conn_rads[i]
             r_max = cl_maxmap_rads[i]
             for j, fil in enumerate(self.fils):
@@ -380,12 +387,12 @@ class Disperse3D:
                         count_fils += 1
                         break
 
-            for j, m in enumerate(self.maxs):
-                if dist(m['CX'], m['CY'], m['CZ'],
-                        x3, y3, z3) <= r_max:
-                    cl_maxmap[i] += 1
-                    maxs_maxmap[j] += 1
-                    count_maxs += 1
+            # for j, m in enumerate(self.maxs):
+            #     if dist(m['CX'], m['CY'], m['CZ'],
+            #             x3, y3, z3) <= r_max:
+            #         cl_maxmap[i] += 1
+            #         maxs_maxmap[j] += 1
+            #         count_maxs += 1
 
         return cl_conn, cl_maxmap, \
                fils_conn, maxs_maxmap, \
@@ -394,8 +401,11 @@ class Disperse3D:
     def plot_2d(
         self, plot_galaxies=True, plot_clusters=True,
         plot_cps=True, plot_only_max=True, plot_fils=True,
-        cl_fils=None, cl_maxs=None, title=None
+        cl_fils=None, cl_maxs=None, title=None, clusters=None
     ):
+        if clusters is None:
+            clusters = self.clusters
+
         font = {'size': 16}
         plt.rc('font', **font)
         fig = plt.figure(figsize=(18, 12))
@@ -406,15 +416,15 @@ class Disperse3D:
             ax.scatter(self.galaxies['RA'], self.galaxies['DEC'], c='grey', s=8)
 
         if plot_clusters:
-            ax.scatter(self.clusters['RA'], self.clusters['DEC'], c='purple', s=150)
+            ax.scatter(clusters['RA'], clusters['DEC'], c='purple', s=150)
             if cl_maxs is not None:
-                t = self.clusters[cl_maxs]
+                t = clusters[cl_maxs]
                 ax.scatter(
                     t['RA'], t['DEC'],
                     marker='s', facecolors='none', edgecolors='orange', linewidths=5, s=500
                 )
             if cl_fils is not None:
-                t = self.clusters[cl_fils]
+                t = clusters[cl_fils]
                 ax.scatter(
                     t['RA'], t['DEC'],
                     facecolors='none', edgecolors='cyan', linewidths=4, s=300
@@ -439,7 +449,7 @@ class Disperse3D:
                 for i in range(len(points)):
                     x.append(points[i]['RA'])
                     y.append(points[i]['DEC'])
-                ax.plot(x, y, 'b', linewidth=1)
+                ax.plot(x, y, 'b', linewidth=2, color='b')
 
         ax.invert_xaxis()
         ax.set_xlabel('RA')
@@ -456,9 +466,12 @@ class Disperse3D:
     def plot_3d(
         self, plot_galaxies=False, plot_clusters=True,
         plot_cps=False, plot_only_max=True, plot_fils=True,
-        cl_fils=None, cl_maxs=None, title=None
+        cl_fils=None, cl_maxs=None, title=None, clusters=None
     ):
-        fig = plt.figure(figsize=(12, 8))
+        if clusters is None:
+            clusters = self.clusters
+
+        fig = plt.figure(figsize=(15, 10))
         ax = fig.add_subplot(111, projection='3d')
         ax.set_xlim(self.ra_int)
         ax.set_zlim(self.dec_int)
@@ -472,17 +485,17 @@ class Disperse3D:
 
         if plot_clusters:
             ax.scatter(
-                self.clusters['RA'], self.clusters['Z'], self.clusters['DEC'],
+                clusters['RA'], clusters['Z'], clusters['DEC'],
                 color='purple', s=40, alpha=1
             )
             if cl_maxs is not None:
-                t = self.clusters[cl_maxs]
+                t = clusters[cl_maxs]
                 ax.scatter(
                     t['RA'], t['Z'], t['DEC'],
                     marker='s', facecolors='none', edgecolors='orange', linewidths=5, s=50
                 )
             if cl_fils is not None:
-                t = self.clusters[cl_fils]
+                t = clusters[cl_fils]
                 ax.scatter(
                     t['RA'], t['Z'], t['DEC'],
                     facecolors='none', edgecolors='cyan', linewidths=2, s=30
@@ -513,7 +526,7 @@ class Disperse3D:
                     x.append(points[i]['RA'])
                     y.append(points[i]['DEC'])
                     z.append(points[i]['Z'])
-                ax.plot(x, z, y, 'b', linewidth=1)
+                ax.plot(x, z, y, 'b', linewidth=1, color='b')
 
         ax.invert_xaxis()
         ax.set_xlabel('RA')

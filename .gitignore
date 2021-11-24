@@ -4,6 +4,7 @@
 *.gz
 *.txt
 *.csv
+*.json
 /_disperse*
 /MGS
 /SDSS
