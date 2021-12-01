@@ -15,6 +15,7 @@ import copy
 # Переменные указывающие было ли выполненно некоторое действие
 # Перевод из декартовых в сферические
 # Куда сохранять случайные кластера?
+# plt.hline() в visual_metrics
 
 
 def dist(x1, y1, z1, x2, y2, z2):
@@ -51,6 +52,52 @@ class Disperse3D:
     RANDOM_CLUSTERS_NUM = 5
     random_clusters = None
 
+    @classmethod
+    def metrics_visual(cls, metric, metrics, mode='overall', sigma=None, smooth=None):
+        font = {'size': 16}
+        plt.rc('font', **font)
+        coefs = metrics['COEFS']
+        fig = plt.figure(figsize=(18, 12))
+        rads = metrics['rads']
+        if mode == 'overall':
+            i = 0
+            for sigma in metrics['sigmas']:
+                for smooth in metrics['smooths']:
+                    if i % 3 == 0:
+                        linestyle = '-'
+                        linewidth = 2
+                    if i % 3 == 1:
+                        linestyle = '--'
+                        linewidth = 2
+                    if i % 3 == 2:
+                        linestyle = ':'
+                        linewidth = 4
+                    m = metrics[sigma][smooth][metric]
+                    plt.plot(
+                        rads, m, linestyle=linestyle, linewidth=linewidth,
+                        label=f'{m}_SIGMA={sigma}_SMOOTH={smooth}'
+                    )
+            # plt.hline() # TODO
+            plt.grid()
+            plt.xticks(coefs)
+            # plt.yticks(np.arange(0.0, 1.1, 0.1)) # TODO
+            plt.xlabel(metrics['mode'])
+            plt.ylabel(metric)
+            plt.legend()
+            plt.title(metric)
+        else:
+            plt.plot(rads, metrics[sigma][smooth]['true_'+metric], label='true_'+metric)
+            plt.plot(rads, metrics[sigma][smooth]['false_'+metric], label='false_'+metric)
+            plt.plot(rads, metrics[sigma][smooth]['diff_'+metric], label='diff_'+metric)
+            # plt.hlines(1, min(coefs), max(coefs), color='r', label='total')
+            plt.grid()
+            plt.xticks(coefs)
+            # plt.yticks(np.arange(0.0, 1.1, 0.1)) # TODO
+            plt.xlabel(metrics['mode'])
+            plt.ylabel(metric)
+            plt.legend()
+            plt.title(f'true/false/diff {metric}: SIGMA={sigma}, SMOOTH={smooth}')
+
     def __init__(
         self, galaxies, clusters, disperse_path,
         cosmo_H0, cosmo_Om, cosmo_Ol, cosmo_Ok,
@@ -82,7 +129,7 @@ class Disperse3D:
         else:
             print('WRONG shp2cart_f value')
             self.sph2cart = self.sph2cart_DIST
-            
+
         #TODO
         if cart2sph_f == 'dist':
             self.cart2sph = self.cart2sph_DIST
