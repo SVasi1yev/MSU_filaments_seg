@@ -6,6 +6,15 @@ from tqdm import tqdm
 from astropy.cosmology import FlatLambdaCDM, z_at_value
 from astropy.coordinates import SkyCoord
 from astropy import units as u
+from sklearn.neighbors import KDTree
+from scipy.spatial import ConvexHull
+import copy
+
+# TODO
+# Настройка угла соединения филаментов в рассчете метрик
+# Переменные указывающие было ли выполненно некоторое действие
+# Перевод из декартовых в сферические
+# Куда сохранять случайные кластера?
 
 
 def dist(x1, y1, z1, x2, y2, z2):
@@ -21,8 +30,9 @@ def intersec_line_sphere(x1, y1, z1, x2, y2, z2, x3, y3, z3, r):
     if d < 0:
         return False
     if d == 0:
-        u = -b/(2*a)
-        if 0 <= u <= 1:
+        u_ = -b/(2*a)
+        # print(f'a={a}, b={b}, u_={u_}')
+        if 0 <= u_ <= 1:
             return True
         else:
             return False
@@ -38,13 +48,15 @@ def intersec_line_sphere(x1, y1, z1, x2, y2, z2, x3, y3, z3, r):
 
 
 class Disperse3D:
+    RANDOM_CLUSTERS_NUM = 5
+    random_clusters = None
+
     def __init__(
         self, galaxies, clusters, disperse_path,
         cosmo_H0, cosmo_Om, cosmo_Ol, cosmo_Ok,
-        sph2cart_f='dtfe_min'
+        sph2cart_f='dist', cart2sph_f='dist'
     ):
         #GALAXIES and CLUSTERS must have fields 'RA', 'DEC', 'Z'
-        #
 
         self.disperse_path = disperse_path
         if self.disperse_path[-1] != '/':
@@ -69,9 +81,28 @@ class Disperse3D:
             self.sph2cart = self.sph2cart_ASTROPY
         else:
             print('WRONG shp2cart_f value')
-            self.sph2cart = self.sph2cart_DTFE_MIN
+            self.sph2cart = self.sph2cart_DIST
+            
         #TODO
-        self.cart2sph = None
+        if cart2sph_f == 'dist':
+            self.cart2sph = self.cart2sph_DIST
+        elif cart2sph_f == 'astropy':
+            self.cart2sph = self.cart2sph_ASTROPY
+        else:
+            print('WRONG cart2sph_f value')
+            self.cart2sph = self.cart2sph_DIST
+
+        self.cart_coords = False
+        self.apply = False
+
+        self.fils = None
+
+        self.disperse_sigma = None
+        self.disperse_smooth = None
+        self.disperse_board = None
+        self.disprese_asmb_angle = None
+
+        self.metrics = None
 
     def sph2cart_DTFE_MIN(self, ra, dec, z):
         uniq_a = []
@@ -221,6 +252,8 @@ class Disperse3D:
         self.clusters = self.clusters.assign(CY=CY)
         self.clusters = self.clusters.assign(CZ=CZ)
 
+        self.cart_coords = True
+
     #TODO
     def count_sph_coords(self):
         ra, dec, z = self.cart2sph(
@@ -238,9 +271,12 @@ class Disperse3D:
         self.clusters = self.clusters.assign(Z=z)
 
     def apply_disperse(
-        self, disperse_sigma, disperse_smooth, disperse_board, disprese_asmb_angle=0,
-        in_cart_coords=True
+        self, disperse_sigma, disperse_smooth, disperse_board='smooth',
+        disprese_asmb_angle=30, in_cart_coords=True
     ):
+        self.fils = None
+        self.metrics = None
+
         self.disperse_sigma = disperse_sigma if disperse_sigma != int(disperse_sigma) else int(disperse_sigma)
         self.disperse_smooth = disperse_smooth
         self.disperse_board = disperse_board
@@ -281,6 +317,8 @@ class Disperse3D:
         )
 
         os.system(f'rm {self.DISPERSE_IN}* test_smooth.dat')
+
+        self.apply=True
 
     def read_skl_ascii_RaDecZ(self, file_name):
         self.cps = []
@@ -348,18 +386,46 @@ class Disperse3D:
                 self.maxs.append(cp.copy())
         self.maxs = sorted(self.maxs, key=lambda x: -x['value'])
 
-    def count_conn_maxmap(self, cl_conn_rads, cl_maxmap_rads, clusters=None):
+    def count_conn(self, cl_conn_rads, clusters=None):
         if clusters is None:
             clusters = self.clusters
 
+        MIN_SEG_LEN = 1  # Mpc
+
+        points = []
+        next_point = []
+        fil_num = []
+        count = 0
+        for i, fil in enumerate(self.fils):
+            sp = fil['sample_points']
+            for j in range(len(sp) - 1):
+                points.append([sp[j]['CX'], sp[j]['CY'], sp[j]['CZ']])
+                fil_num.append(i)
+                count += 1
+                next_point.append(count)
+                d = dist(
+                    sp[j]['CX'], sp[j]['CY'], sp[j]['CZ'],
+                    sp[j + 1]['CX'], sp[j + 1]['CY'], sp[j + 1]['CZ']
+                )
+                if d > MIN_SEG_LEN:
+                    n = int(d // MIN_SEG_LEN + 1)
+                    d_x = sp[j + 1]['CX'] - sp[j]['CX']
+                    d_y = sp[j + 1]['CY'] - sp[j]['CY']
+                    d_z = sp[j + 1]['CZ'] - sp[j]['CZ']
+                    for k in range(1, n):
+                        points.append([sp[j]['CX'] + k * d_x / n, sp[j]['CY'] + k * d_y / n, sp[j]['CZ'] + k * d_z / n])
+                        fil_num.append(i)
+                        count += 1
+                        next_point.append(count)
+            points.append([sp[-1]['CX'], sp[-1]['CY'], sp[-1]['CZ']])
+            fil_num.append(i)
+            count += 1
+            next_point.append(None)
+
+        kd_tree = KDTree(points, leaf_size=2)
+
         cl_conn = [0] * clusters.shape[0]
-        cl_maxmap = [0] * clusters.shape[0]
-
         fils_conn = [0] * len(self.fils)
-        maxs_maxmap = [0] * len(self.maxs)
-
-        count_fils = 0
-        count_maxs = 0
 
         CX = clusters['CX']
         CY = clusters['CY']
@@ -370,33 +436,208 @@ class Disperse3D:
             y3 = CY[i]
             z3 = CZ[i]
             r_fil = cl_conn_rads[i]
-            r_max = cl_maxmap_rads[i]
-            for j, fil in enumerate(self.fils):
-                points = fil['sample_points']
-                for l in range(len(points) - 1):
-                    x1, y1, z1 = points[l]['CX'], points[l]['CY'], points[l]['CZ']
-                    x2, y2, z2 = points[l + 1]['CX'], points[l + 1]['CY'], points[l + 1]['CZ']
-                    if intersec_line_sphere(
-                            x1, y1, z1,
-                            x2, y2, z2,
-                            x3, y3, z3,
-                            r_fil
-                    ):
-                        cl_conn[i] += 1
-                        fils_conn[j] += 1
-                        count_fils += 1
-                        break
 
-            # for j, m in enumerate(self.maxs):
-            #     if dist(m['CX'], m['CY'], m['CZ'],
-            #             x3, y3, z3) <= r_max:
-            #         cl_maxmap[i] += 1
-            #         maxs_maxmap[j] += 1
-            #         count_maxs += 1
+            proc_fils = set()
 
-        return cl_conn, cl_maxmap, \
-               fils_conn, maxs_maxmap, \
-               count_fils, count_maxs
+            close_points_idx = kd_tree.query_radius([[x3, y3, z3]], r=r_fil + MIN_SEG_LEN + 1)
+            for p_idx in close_points_idx[0]:
+                if fil_num[p_idx] in proc_fils:
+                    continue
+                if next_point[p_idx] is None:
+                    continue
+                x1, y1, z1 = tuple(points[p_idx])
+                x2, y2, z2 = tuple(points[next_point[p_idx]])
+                if intersec_line_sphere(
+                    x1, y1, z1,
+                    x2, y2, z2,
+                    x3, y3, z3,
+                    r_fil
+                ):
+                    cl_conn[i] += 1
+                    fils_conn[fil_num[p_idx]] += 1
+                    proc_fils.add(fil_num[p_idx])
+
+        # for i in range(self.clusters.shape[0]):
+        #     x3 = CX[i]
+        #     y3 = CY[i]
+        #     z3 = CZ[i]
+        #     r_fil = cl_conn_rads[i]
+        #     r_max = cl_maxmap_rads[i]
+        #     for j, fil in enumerate(self.fils):
+        #         points = fil['sample_points']
+        #         for l in range(len(points) - 1):
+        #             x1, y1, z1 = points[l]['CX'], points[l]['CY'], points[l]['CZ']
+        #             x2, y2, z2 = points[l + 1]['CX'], points[l + 1]['CY'], points[l + 1]['CZ']
+        #             if intersec_line_sphere(
+        #                     x1, y1, z1,
+        #                     x2, y2, z2,
+        #                     x3, y3, z3,
+        #                     r_fil
+        #             ):
+        #                 cl_conn[i] += 1
+        #                 fils_conn[j] += 1
+        #                 count_fils += 1
+        #                 break
+        #
+        #     # for j, m in enumerate(self.maxs):
+        #     #     if dist(m['CX'], m['CY'], m['CZ'],
+        #     #             x3, y3, z3) <= r_max:
+        #     #         cl_maxmap[i] += 1
+        #     #         maxs_maxmap[j] += 1
+        #     #         count_maxs += 1
+        #
+
+        return cl_conn, fils_conn
+
+    def count_metrics(self, mode, rads, clusters=None):
+        if clusters is None:
+            clusters = self.clusters
+        if self.metrics is not None:
+            print('Metrics was already computed')
+            return
+        if not self.apply:
+            print('DisPerSe wasn\'t computed')
+            return
+        if Disperse3D.random_clusters is None or \
+                Disperse3D.random_clusters[0].shape[0] != clusters.shape[0]:
+            CX_int = (self.galaxies['CX'].min(), self.galaxies['CX'].max())
+            CY_int = (self.galaxies['CY'].min(), self.galaxies['CY'].max())
+            CZ_int = (self.galaxies['CZ'].min(), self.galaxies['CZ'].max())
+
+            points = np.array(self.galaxies[['CX', 'CY', 'CZ']])
+            hull = ConvexHull(points)
+            A, b = hull.equations[:, :-1], hull.equations[:, -1:]
+            EPS = -5
+
+            def contained(x):
+                return np.all(np.asarray(x) @ A.T + b.T < EPS, axis=1)
+
+            np.random.seed(0)
+
+            for i in range(Disperse3D.RANDOM_CLUSTERS_NUM):
+                CX, CY, CZ = [], [], []
+                for j in tqdm(range(clusters.shape[0])):
+                    fl = False
+                    while not fl:
+                        cx = np.random.uniform(CX_int[0], CX_int[1], 1)[0]
+                        cy = np.random.uniform(CY_int[0], CY_int[1], 1)[0]
+                        cz = np.random.uniform(CZ_int[0], CZ_int[1], 1)[0]
+                        fl = contained([[cx, cy, cz]])
+                    CX.append(cx)
+                    CY.append(cy)
+                    CZ.append(cz)
+                df = pd.DataFrame()
+                df = df.assign(CX=CX)
+                df = df.assign(CY=CY)
+                df = df.assign(CZ=CZ)
+                ra, dec, z = self.cart2shp_ASTROPY(CX, CY, CZ)
+                df = df.assign(RA=ra)
+                df = df.assign(DEC=dec)
+                df = df.assign(Z=z)
+                Disperse3D.random_clusters.append(df)
+
+        self.metrics = {}
+        self.metrics['sigma'] = self.disperse_sigma
+        self.metrics['smooth'] = self.disperse_smooth
+        self.metrics['angle'] = self.disprese_asmb_angle
+        self.metrics['mode'] = mode
+        self.metrics['rads'] = rads
+
+        cl_num = clusters.shape[0]
+        fils_num = len(self.fils)
+
+        true_cl_inter = []
+        true_fils_inter = []
+        for rad in tqdm(rads):
+            if mode == 'coefs':
+                cl_conn, fils_conn = DPS.count_conn(
+                    self.clusters['R'] * rad,
+                    clusters
+                )
+            else:
+                cl_conn, fils_conn = DPS.count_conn(
+                    [rad] * self.clusters.shape[0],
+                    clusters
+                )
+            true_cl_inter.append(sum(list(map(lambda x: int(x > 0), cl_conn))))
+            true_fils_inter.append(sum(list(map(lambda x: int(x > 0), fils_conn))))
+        true_cl_inter = np.array(true_cl_inter)
+        true_fils_inter = np.array(true_fils_inter)
+
+        false_cl_inter = []
+        false_fils_inter = []
+        for i in tqdm(range(Disperse3D.RANDOM_CLUSTERS_NUM)):
+            false_cl_inter.append([])
+            false_fils_inter.append([])
+            for rad in rads:
+                if mode == 'coefs':
+                    cl_conn, fils_conn = DPS.count_conn(
+                        Disperse3D.random_clusters[i]['R'] * rad
+                    )
+                else:
+                    cl_conn, fils_conn = DPS.count_conn(
+                        [rad] * Disperse3D.random_clusters[i]['R']
+                    )
+                false_cl_inter[i].append(sum(list(map(lambda x: int(x > 0), cl_conn))))
+                false_fils_inter[i].append(sum(list(map(lambda x: int(x > 0), fils_conn))))
+
+        false_cl_inter = np.array(false_cl_inter).mean(0)
+        false_fils_inter = np.array(false_fils_inter).mean(0)
+
+        diff_cl_inter = true_cl_inter - false_cl_inter
+        diff_fils_inter = true_fils_inter - false_fils_inter
+
+        true_recall = true_cl_inter / cl_num
+        false_recall = false_cl_inter / cl_num
+        diff_recall = diff_cl_inter / cl_num
+
+        true_precision = true_fils_inter / fils_num
+        false_precision = false_fils_inter / fils_num
+        diff_precision = diff_fils_inter / fils_num
+
+        true_f1 = 2 * true_recall * true_precision / (true_recall + true_precision)
+        false_f1 = 2 * false_recall * false_precision / (false_recall + false_precision)
+        diff_f1 = 2 * diff_recall * diff_precision / (diff_recall + diff_precision)
+
+        self.metrics['cl_num'] = cl_num
+        self.metrics['fils_num'] = fils_num
+
+        self.metrics['true_cl_inter'] = [int(e) for e in true_cl_inter]
+        self.metrics['false_cl_inter'] = [float(e) for e in false_cl_inter]
+        self.metrics['diff_cl_inter'] = [float(e) for e in diff_cl_inter]
+
+        self.metrics['true_fils_inter'] = [int(e) for e in true_fils_inter]
+        self.metrics['false_fils_inter'] = [int(e) for e in false_fils_inter]
+        self.metrics['diff_fils_inter'] = [int(e) for e in diff_fils_inter]
+
+        self.metrics['true_recall'] = [int(e) for e in true_recall]
+        self.metrics['false_recall'] = [float(e) for e in false_recall]
+        self.metrics['diff_recall'] = [float(e) for e in diff_recall]
+
+        self.metrics['true_precision'] = [int(e) for e in true_precision]
+        self.metrics['false_precision'] = [float(e) for e in false_precision]
+        self.metrics['diff_precision'] = [float(e) for e in diff_precision]
+
+        self.metrics['true_f1'] = [int(e) for e in true_f1]
+        self.metrics['false_f1'] = [float(e) for e in false_f1]
+        self.metrics['diff_f1'] = [float(e) for e in diff_f1]
+
+    def count_metrics_several_params(self, sigmas, smooths, mode, rads, clusters=None):
+        if clusters is None:
+            clusters = self.clusters
+        metrics = {}
+        metrics['sigmas'] = sigmas
+        metrics['smooths'] = smooths
+        metrics['mode'] = mode
+        metrics['rads'] = rads
+        for sigma in sigmas:
+            metrics[sigma] = {}
+            for smooth in smooths:
+                self.apply_disperse(sigma, smooth)
+                self.count_metrics(mode, rads, clusters)
+                metrics[sigma][smooth] = copy.deepcopy(self.metrics)
+
+        return metrics
 
     def plot_2d(
         self, plot_galaxies=True, plot_clusters=True,
