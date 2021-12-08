@@ -16,6 +16,7 @@ import copy
 # Перевод из декартовых в сферические
 # Куда сохранять случайные кластера?
 # plt.hline() в visual_metrics
+# доделать генерацию данных для сегметации
 
 
 def dist(x1, y1, z1, x2, y2, z2):
@@ -113,6 +114,9 @@ class Disperse3D:
         self.ra_int = (self.galaxies['RA'].min() - 5, self.galaxies['RA'].max() + 5)
         self.dec_int = (self.galaxies['DEC'].min() - 5, self.galaxies['DEC'].max() + 5)
         self.z_int = (self.galaxies['Z'].min() - 0.002, self.galaxies['Z'].max() + 0.002)
+        self.CX_int = None
+        self.CY_int = None
+        self.CZ_int = None
         self.cosmo_H0 = cosmo_H0 / 100
         self.cosmo_Om = cosmo_Om
         self.cosmo_Ol = cosmo_Ol
@@ -291,6 +295,10 @@ class Disperse3D:
         self.galaxies = self.galaxies.assign(CX=CX)
         self.galaxies = self.galaxies.assign(CY=CY)
         self.galaxies = self.galaxies.assign(CZ=CZ)
+
+        self.CX_int = (self.galaxies['CX'].min(), self.galaxies['CX'].max())
+        self.CY_int = (self.galaxies['CY'].min(), self.galaxies['CY'].max())
+        self.CZ_int = (self.galaxies['CZ'].min(), self.galaxies['CZ'].max())
 
         CX, CY, CZ = self.sph2cart(
             self.clusters['RA'], self.clusters['DEC'], self.clusters['Z']
@@ -597,12 +605,12 @@ class Disperse3D:
         true_fils_inter = []
         for rad in tqdm(rads):
             if mode == 'coefs':
-                cl_conn, fils_conn = DPS.count_conn(
+                cl_conn, fils_conn = self.count_conn(
                     self.clusters['R'] * rad,
                     clusters
                 )
             else:
-                cl_conn, fils_conn = DPS.count_conn(
+                cl_conn, fils_conn = self.count_conn(
                     [rad] * self.clusters.shape[0],
                     clusters
                 )
@@ -618,11 +626,11 @@ class Disperse3D:
             false_fils_inter.append([])
             for rad in rads:
                 if mode == 'coefs':
-                    cl_conn, fils_conn = DPS.count_conn(
+                    cl_conn, fils_conn = self.count_conn(
                         Disperse3D.random_clusters[i]['R'] * rad
                     )
                 else:
-                    cl_conn, fils_conn = DPS.count_conn(
+                    cl_conn, fils_conn = self.count_conn(
                         [rad] * Disperse3D.random_clusters[i]['R']
                     )
                 false_cl_inter[i].append(sum(list(map(lambda x: int(x > 0), cl_conn))))
@@ -685,6 +693,70 @@ class Disperse3D:
                 metrics[sigma][smooth] = copy.deepcopy(self.metrics)
 
         return metrics
+
+    #TODO
+    def get_seg_mask(self, voxel_size, fil_rad):
+        mask_sizes = (
+            (self.CX_int[1] - self.CX_int[0]) // voxel_size,
+            (self.CY_int[1] - self.CY_int[0]) // voxel_size,
+            (self.CZ_int[1] - self.CZ_int[0]) // voxel_size
+        )
+        mask = np.zeros(mask_sizes)
+
+        MIN_SEG_LEN = 1  # Mpc
+
+        points = []
+        next_point = []
+        fil_num = []
+        count = 0
+        for i, fil in enumerate(self.fils):
+            sp = fil['sample_points']
+            for j in range(len(sp) - 1):
+                points.append([sp[j]['CX'], sp[j]['CY'], sp[j]['CZ']])
+                fil_num.append(i)
+                count += 1
+                next_point.append(count)
+                d = dist(
+                    sp[j]['CX'], sp[j]['CY'], sp[j]['CZ'],
+                    sp[j + 1]['CX'], sp[j + 1]['CY'], sp[j + 1]['CZ']
+                )
+                if d > MIN_SEG_LEN:
+                    n = int(d // MIN_SEG_LEN + 1)
+                    d_x = sp[j + 1]['CX'] - sp[j]['CX']
+                    d_y = sp[j + 1]['CY'] - sp[j]['CY']
+                    d_z = sp[j + 1]['CZ'] - sp[j]['CZ']
+                    for k in range(1, n):
+                        points.append([sp[j]['CX'] + k * d_x / n, sp[j]['CY'] + k * d_y / n, sp[j]['CZ'] + k * d_z / n])
+                        fil_num.append(i)
+                        count += 1
+                        next_point.append(count)
+            points.append([sp[-1]['CX'], sp[-1]['CY'], sp[-1]['CZ']])
+            fil_num.append(i)
+            count += 1
+            next_point.append(None)
+
+        kd_tree = KDTree(points, leaf_size=2)
+
+        for i in range(mask_sizes[0]):
+            for j in range(mask_sizes[1]):
+                for k in range(mask_sizes[2]):
+                    x3, y3, z3 = (i + 0.5) * voxel_size, (j + 0.5) * voxel_size, (k + 0.5) * voxel_size
+                    close_points_idx = kd_tree.query_radius([[x3, y3, z3]], r=fil_rad + MIN_SEG_LEN + 1)
+                    for p_idx in close_points_idx[0]:
+                        if next_point[p_idx] is None:
+                            continue
+                        x1, y1, z1 = tuple(points[p_idx])
+                        x2, y2, z2 = tuple(points[next_point[p_idx]])
+                        if intersec_line_sphere(
+                                x1, y1, z1,
+                                x2, y2, z2,
+                                x3, y3, z3,
+                                fil_rad
+                        ):
+                            mask[i, j, k] = 1
+
+        return mask
+
 
     def plot_2d(
         self, plot_galaxies=True, plot_clusters=True,
