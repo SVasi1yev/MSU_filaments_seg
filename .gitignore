@@ -1,4 +1,5 @@
 *.fits
+*.fit
 *.jpg
 *.png
 *.gz

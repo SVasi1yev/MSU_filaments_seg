@@ -24,6 +24,10 @@ def dist(x1, y1, z1, x2, y2, z2):
 
 
 def intersec_line_sphere(x1, y1, z1, x2, y2, z2, x3, y3, z3, r):
+    """
+    Проверяет пересекает ли отрезок (x1, y1, z1), (x2, y2, z2)
+    шар с центром в точке (x3, y3, z3) и радиусом r
+    """
     a = (x2-x1)**2 + (y2-y1)**2 + (z2-z1)**2
     b = 2 * ((x2-x1)*(x1-x3) + (y2-y1)*(y1-y3) + (z2-z1)*(z1-z3))
     c = x3**2 + y3**2 + z3**2 + x1**2 + y1**2 + z1**2 \
@@ -33,7 +37,6 @@ def intersec_line_sphere(x1, y1, z1, x2, y2, z2, x3, y3, z3, r):
         return False
     if d == 0:
         u_ = -b/(2*a)
-        # print(f'a={a}, b={b}, u_={u_}')
         if 0 <= u_ <= 1:
             return True
         else:
@@ -46,7 +49,7 @@ def intersec_line_sphere(x1, y1, z1, x2, y2, z2, x3, y3, z3, r):
         if (u1 <= 0) and (u2 >= 1) or (u2 <= 0) and (u1 >= 1):
             return True
         return False
-    print(d, 'intersec_line_sphere_ERROR')
+    raise Exception('intersec_line_sphere_ERROR')
 
 
 class Disperse3D:
@@ -55,6 +58,10 @@ class Disperse3D:
 
     @classmethod
     def metrics_visual(cls, metric, metrics, mode='overall', sigma=None, smooth=None):
+        """
+
+        """
+
         font = {'size': 16}
         plt.rc('font', **font)
         coefs = metrics['COEFS']
@@ -100,17 +107,31 @@ class Disperse3D:
             plt.title(f'true/false/diff {metric}: SIGMA={sigma}, SMOOTH={smooth}')
 
     def __init__(
-        self, galaxies, clusters, disperse_path,
+        self, galaxies, disperse_path,
         cosmo_H0, cosmo_Om, cosmo_Ol, cosmo_Ok,
+        clusters=None,
         sph2cart_f='dist', cart2sph_f='dist'
     ):
-        #GALAXIES and CLUSTERS must have fields 'RA', 'DEC', 'Z'
+        """
+        galaxies и cluster должны иметь поля RA, DEC, Z
+        galaxies - DataFrame со сферическими координатами галактик
+        disperse_path - путь до исполняемых файлов пакета disperse
+        cosmo_H0, cosmo_Om, cosmo_Ol, cosmo_Ok - космологические параметры
+        sph2cart_f, cart2sph_f - функции перевода координат
+        clusters - DataFrame со сферическими координатами скоплений для рассчета метрик
+        """
+
+        self.fils = None
+        self.metrics = None
 
         self.disperse_path = disperse_path
         if self.disperse_path[-1] != '/':
             self.disperse_path += '/'
         self.galaxies = galaxies.copy()
-        self.clusters = clusters.copy()
+        if clusters is not None:
+            self.clusters = clusters.copy()
+        else:
+            self.clusters = None
         self.ra_int = (self.galaxies['RA'].min() - 5, self.galaxies['RA'].max() + 5)
         self.dec_int = (self.galaxies['DEC'].min() - 5, self.galaxies['DEC'].max() + 5)
         self.z_int = (self.galaxies['Z'].min() - 0.002, self.galaxies['Z'].max() + 0.002)
@@ -134,7 +155,6 @@ class Disperse3D:
             print('WRONG shp2cart_f value')
             self.sph2cart = self.sph2cart_DIST
 
-        #TODO
         if cart2sph_f == 'dist':
             self.cart2sph = self.cart2sph_DIST
         elif cart2sph_f == 'astropy':
@@ -156,6 +176,11 @@ class Disperse3D:
         self.metrics = None
 
     def sph2cart_DTFE_MIN(self, ra, dec, z):
+        """
+        Преобразование сферических координат в декартовы вызовом
+        команды delaunay_3D с параметром -minimal
+        """
+
         uniq_a = []
         uniq_d = {}
         for i in range(len(ra)):
@@ -200,6 +225,11 @@ class Disperse3D:
         return CX, CY, CZ
 
     def sph2cart_DIST(self, ra, dec, z):
+        """
+        Преобразование сферичесих координат в декартовы
+        с использованием соответствующих функций из пакета disperse
+        """
+
         with open(self.COORDS_IN, 'w') as f:
             for i in range(len(z)):
                 f.write(f'{z[i]}\n')
@@ -227,8 +257,12 @@ class Disperse3D:
 
         return CX, CY, CZ
 
-    #TODO
     def cart2sph_DIST(self, CX, CY, CZ):
+        """
+        Преобразование декартовых координат в сферические
+        с использованием соответствующих функций из пакета disperse
+        """
+
         ra, dec, dist = [], [], []
         for i in range(len(CX)):
             ra.append(np.arctan(CY[i] / CX[i]))
@@ -254,6 +288,11 @@ class Disperse3D:
         return ra, dec, z
 
     def sph2cart_ASTROPY(self, ra, dec, z):
+        """
+        Преобразование сферичесих координат в декартовы
+        с использованием пакета astropy
+        """
+
         CX, CY, CZ = [], [], []
         for i in range(len(ra)):
             c = SkyCoord(
@@ -269,8 +308,12 @@ class Disperse3D:
 
         return CX, CY, CZ
 
-    #TODO
-    def cart2shp_ASTROPY(self, CX, CY, CZ):
+    def cart2sph_ASTROPY(self, CX, CY, CZ):
+        """
+        Преобразование декартовых кооin_cart_coordsрдинат в сферические
+        с использованием пакета astropy
+        """
+
         ra, dec, z = [], [], []
         for i in range(len(CX)):
             c = SkyCoord(
@@ -289,9 +332,15 @@ class Disperse3D:
         return ra, dec, z
 
     def count_cart_coords(self):
+        """
+        Вычисление декартовых координат по сферическим
+        в данных о галактиках и кластерах
+        """
+
         CX, CY, CZ = self.sph2cart(
             self.galaxies['RA'], self.galaxies['DEC'], self.galaxies['Z']
         )
+
         self.galaxies = self.galaxies.assign(CX=CX)
         self.galaxies = self.galaxies.assign(CY=CY)
         self.galaxies = self.galaxies.assign(CZ=CZ)
@@ -300,17 +349,22 @@ class Disperse3D:
         self.CY_int = (self.galaxies['CY'].min(), self.galaxies['CY'].max())
         self.CZ_int = (self.galaxies['CZ'].min(), self.galaxies['CZ'].max())
 
-        CX, CY, CZ = self.sph2cart(
-            self.clusters['RA'], self.clusters['DEC'], self.clusters['Z']
-        )
-        self.clusters = self.clusters.assign(CX=CX)
-        self.clusters = self.clusters.assign(CY=CY)
-        self.clusters = self.clusters.assign(CZ=CZ)
+        if self.clusters is not None:
+            CX, CY, CZ = self.sph2cart(
+                self.clusters['RA'], self.clusters['DEC'], self.clusters['Z']
+            )
+            self.clusters = self.clusters.assign(CX=CX)
+            self.clusters = self.clusters.assign(CY=CY)
+            self.clusters = self.clusters.assign(CZ=CZ)
 
         self.cart_coords = True
 
-    #TODO
     def count_sph_coords(self):
+        """
+        Вычисление сферических координат по декартовым
+        в данных о галактиках и кластерах
+        """
+
         ra, dec, z = self.cart2sph(
             self.galaxies['CX'], self.galaxies['CY'], self.galaxies['CZ']
         )
@@ -318,17 +372,27 @@ class Disperse3D:
         self.galaxies = self.galaxies.assign(DEC=dec)
         self.galaxies = self.galaxies.assign(Z=z)
 
-        ra, dec, z = self.cart2sph(
-            self.clusters['RA'], self.clusters['DEC'], self.clusters['Z']
-        )
-        self.clusters = self.clusters.assign(RA=ra)
-        self.clusters = self.clusters.assign(DEC=dec)
-        self.clusters = self.clusters.assign(Z=z)
+        if self.clusters is not None:
+            ra, dec, z = self.cart2sph(
+                self.clusters['CX'], self.clusters['CY'], self.clusters['CZ']
+            )
+            self.clusters = self.clusters.assign(RA=ra)
+            self.clusters = self.clusters.assign(DEC=dec)
+            self.clusters = self.clusters.assign(Z=z)
 
     def apply_disperse(
         self, disperse_sigma, disperse_smooth, disperse_board='smooth',
         disprese_asmb_angle=30, in_cart_coords=True
     ):
+        """
+        Применение алгоритма disperse к self.galaxies. Построение критических точек и филаментов.
+        disperse_sigma - погор персистентности
+        disperse_smooth - число сглаживаний dtfe
+        disperse_board - способо дополнения данных по границам
+        disprese_asmb_angle - минимальный угол между филаментами для соединения
+        in_cart_coords - передавать ли декартовы координаты в disperse
+        """
+
         self.fils = None
         self.metrics = None
 
@@ -350,23 +414,27 @@ class Disperse3D:
                     t = self.galaxies.iloc[i]
                     f.write(f'{t.RA}\t{t.DEC}\t{t.Z}\n')
 
+        print(">>> delaunay_3D starts")
         os.system((
             f'{self.disperse_path}delaunay_3D {self.DISPERSE_IN} '
             f'-btype {self.disperse_board} -smooth {self.disperse_smooth} '
             f'-cosmo {self.cosmo_Om} {self.cosmo_Ol} {self.cosmo_Ok} {self.cosmo_H0} {-1.0}'
         ))
 
+        print(">>> mse starts")
         os.system((
             f'{self.disperse_path}mse {self.DISPERSE_IN}.NDnet '
             f'-upSkl -forceLoops -nsig {self.disperse_sigma}'
         ))
 
+        print(">>> skelconv starts")
         os.system((
             f'{self.disperse_path}skelconv {self.DISPERSE_IN}.NDnet_s{self.disperse_sigma}.up.NDskl '
             f'-breakdown -to NDskl_ascii {f"-assemble 0 {self.disprese_asmb_angle}"} -toRaDecZ '
             f'-cosmo {self.cosmo_Om} {self.cosmo_Ol} {self.cosmo_Ok} {self.cosmo_H0} {-1.0}'
         ))
 
+        print(">>> read_skl_ascii_RaDecZ starts")
         self.read_skl_ascii_RaDecZ(
             f'{self.DISPERSE_IN}.NDnet_s{self.disperse_sigma}.up.NDskl.BRK.ASMB.RaDecZ.a.NDskl'
         )
@@ -442,6 +510,14 @@ class Disperse3D:
         self.maxs = sorted(self.maxs, key=lambda x: -x['value'])
 
     def count_conn(self, cl_conn_rads, clusters=None):
+        """
+        Для всех филаментов рассчитывается числа пересекаемых скоплений,
+        для каждого скоплений число пересекших его филаментов
+        cl_conn_rads: радиуса скоплений
+        clusters: DataFrame со скоплениями, если None, то используется self.clusters
+        :return: cl_conn, fils_conn
+        """
+
         if clusters is None:
             clusters = self.clusters
 
@@ -512,39 +588,18 @@ class Disperse3D:
                     fils_conn[fil_num[p_idx]] += 1
                     proc_fils.add(fil_num[p_idx])
 
-        # for i in range(self.clusters.shape[0]):
-        #     x3 = CX[i]
-        #     y3 = CY[i]
-        #     z3 = CZ[i]
-        #     r_fil = cl_conn_rads[i]
-        #     r_max = cl_maxmap_rads[i]
-        #     for j, fil in enumerate(self.fils):
-        #         points = fil['sample_points']
-        #         for l in range(len(points) - 1):
-        #             x1, y1, z1 = points[l]['CX'], points[l]['CY'], points[l]['CZ']
-        #             x2, y2, z2 = points[l + 1]['CX'], points[l + 1]['CY'], points[l + 1]['CZ']
-        #             if intersec_line_sphere(
-        #                     x1, y1, z1,
-        #                     x2, y2, z2,
-        #                     x3, y3, z3,
-        #                     r_fil
-        #             ):
-        #                 cl_conn[i] += 1
-        #                 fils_conn[j] += 1
-        #                 count_fils += 1
-        #                 break
-        #
-        #     # for j, m in enumerate(self.maxs):
-        #     #     if dist(m['CX'], m['CY'], m['CZ'],
-        #     #             x3, y3, z3) <= r_max:
-        #     #         cl_maxmap[i] += 1
-        #     #         maxs_maxmap[j] += 1
-        #     #         count_maxs += 1
-        #
-
         return cl_conn, fils_conn
 
     def count_metrics(self, mode, rads, clusters=None):
+        """
+        Вычисление метрик
+
+        :param mode: (coefs, mpcs) радиусы скоплений в R200 или Mpc
+        :param rads: набор радиусов для рассчета метрик
+        :param clusters: DataFrame со скоплениями, если None, то используется self.clusters
+        :return: None. Метрики сохраняются в self.metrics
+        """
+
         if clusters is None:
             clusters = self.clusters
         if self.metrics is not None:
@@ -678,6 +733,15 @@ class Disperse3D:
         self.metrics['diff_f1'] = [float(e) for e in diff_f1]
 
     def count_metrics_several_params(self, sigmas, smooths, mode, rads, clusters=None):
+        """
+
+        :param sigmas: набор порогов персистентности
+        :param smooths: набор значений количества сглаживаний
+        :param mode: (coefs, mpcs) радиусы скоплений в R200 или Mpc
+        :param rads: набор радиусов для рассчета метрик
+        :param clusters: DataFrame со скоплениями, если None, то используется self.clusters
+        :return:
+        """
         if clusters is None:
             clusters = self.clusters
         metrics = {}
@@ -697,9 +761,9 @@ class Disperse3D:
     #TODO
     def get_seg_mask(self, voxel_size, fil_rad):
         mask_sizes = (
-            (self.CX_int[1] - self.CX_int[0]) // voxel_size,
-            (self.CY_int[1] - self.CY_int[0]) // voxel_size,
-            (self.CZ_int[1] - self.CZ_int[0]) // voxel_size
+            int((self.CX_int[1] - self.CX_int[0]) // voxel_size) + 1,
+            int((self.CY_int[1] - self.CY_int[0]) // voxel_size) + 1,
+            int((self.CZ_int[1] - self.CZ_int[0]) // voxel_size) + 1
         )
         mask = np.zeros(mask_sizes)
 
@@ -740,7 +804,9 @@ class Disperse3D:
         for i in range(mask_sizes[0]):
             for j in range(mask_sizes[1]):
                 for k in range(mask_sizes[2]):
-                    x3, y3, z3 = (i + 0.5) * voxel_size, (j + 0.5) * voxel_size, (k + 0.5) * voxel_size
+                    x3, y3, z3 = self.CX_int[0] + (i + 0.5) * voxel_size, \
+                                 self.CY_int[0] + (j + 0.5) * voxel_size, \
+                                 self.CZ_int[0] + (k + 0.5) * voxel_size
                     close_points_idx = kd_tree.query_radius([[x3, y3, z3]], r=fil_rad + MIN_SEG_LEN + 1)
                     for p_idx in close_points_idx[0]:
                         if next_point[p_idx] is None:
@@ -755,7 +821,20 @@ class Disperse3D:
                         ):
                             mask[i, j, k] = 1
 
-        return mask
+        input_ = np.zeros(mask_sizes)
+
+        CX = self.galaxies['CX']
+        CY = self.galaxies['CY']
+        CZ = self.galaxies['CZ']
+
+        for i in tqdm(range(len(CX))):
+            input_[
+                int((CX[i] - self.CX_int[0]) // voxel_size),
+                int((CY[i] - self.CY_int[0]) // voxel_size),
+                int((CZ[i] - self.CZ_int[0]) // voxel_size)
+            ] += 1
+
+        return input_, mask
 
 
     def plot_2d(

@@ -2,10 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import time
+import numpy as np
 
 
 class Unet3DModel(nn.Module):
-    def __init__(self, in_channels, out_channels, model_depth=4, final_activation="sigmoid"):
+    def __init__(self, in_channels, out_channels, model_depth=3, final_activation="sigmoid"):
         super(Unet3DModel, self).__init__()
         self.encoder = EncoderBlock(in_channels=in_channels, model_depth=model_depth)
         self.decoder = DecoderBlock(out_channels=out_channels, model_depth=model_depth)
@@ -61,12 +62,12 @@ class EncoderBlock(nn.Module):
         for k, op in self.module_dict.items():
             if k.startswith("conv"):
                 x = op(x)
-                print(k, x.shape)
+                # print('Encoder: ', x.size())
                 if k.endswith("1"):
                     down_sampling_features.append(x)
             elif k.startswith("max_pooling"):
                 x = op(x)
-                print(k, x.shape)
+                # print('Encoder: ', x.size())
 
         return x, down_sampling_features
 
@@ -112,7 +113,10 @@ class DecoderBlock(nn.Module):
     def forward(self, x, down_sampling_features):
         for k, op in self.module_dict.items():
             if k.startswith("deconv"):
+                # print(x.size())
                 x = op(x)
+                # print(x.size())
+                # print(down_sampling_features[int(k[-1])].size())
                 x = torch.cat((down_sampling_features[int(k[-1])], x), dim=1)
             elif k.startswith("conv"):
                 x = op(x)
@@ -121,8 +125,81 @@ class DecoderBlock(nn.Module):
         return x
 
 
-if __name__ == "__main__":
-    inputs = torch.randn(1, 1, 96, 96, 96)
-    model = Unet3DModel(in_channels=1, out_channels=1)
-    x = model(inputs)
-    print(model)
+class DiceLoss(nn.Module):
+    def __init__(self, epsilon=1e-5):
+        super(DiceLoss, self).__init__()
+        # smooth factor
+        self.epsilon = epsilon
+
+    def forward(self, targets, logits):
+        batch_size = targets.size(0)
+        # log_prob = torch.sigmoid(logits)
+        logits = logits.view(batch_size, -1).type(torch.FloatTensor)
+        targets = targets.view(batch_size, -1).type(torch.FloatTensor)
+        intersection = (logits * targets).sum(-1)
+        dice_score = 2. * intersection / ((logits + targets).sum(-1) + self.epsilon)
+        # dice_score = 1 - dice_score.sum() / batch_size
+        return torch.mean(1. - dice_score)
+
+
+class UNetDataset(torch.utils.data.Dataset):
+    def __init__(self, input_, mask, stride, size):
+        self.input_ = input_
+        self.mask = mask
+        self.stride = stride
+        self.size = size
+        self.coords = []
+        self.data_size = input_.shape
+        for k in range(0, self.data_size[0], stride):
+            for l in range(0, self.data_size[1], stride):
+                for m in range(0, self.data_size[2], stride):
+                    if (self.data_size[0] - k * size) >= size \
+                         and (self.data_size[1] - l * size) >= size \
+                         and (self.data_size[2] - m * size) >= size:
+                        self.coords.append((k, l, m))
+
+    def __len__(self):
+        return len(self.coords)
+
+    def __getitem__(self, idx):
+        c = self.coords[idx]
+        return self.input_[None, c[0]: c[0]+self.size, c[1]: c[1]+self.size, c[2]: c[2]+self.size], \
+            self.mask[None, c[0]: c[0] + self.size, c[1]: c[1] + self.size, c[2]: c[2] + self.size]
+
+
+class Trainer(object):
+    def __init__(self, net, optimizer, criterion, n_epochs):
+        self.net = net
+        self.optimizer = optimizer
+        self.criterion = criterion
+        self.n_epochs = n_epochs
+
+    def train(self, data_loader):
+        for epoch in range(self.n_epochs):
+            start_time = time.time()
+            train_losses = []
+            for input_, mask in data_loader:
+                input_ = torch.DoubleTensor(input_)
+                # mask = torch.IntTensor(mask)
+
+                self.optimizer.zero_grad()
+
+                logits = self.net(input_)
+                mask = mask.type(torch.int8)
+                # print(logits)
+                # print(mask)
+                print(mask.sum())
+                loss = self.criterion(logits, mask)
+                loss.backward()
+                self.optimizer.step()
+                train_losses.append(loss.item())
+            end_time = time.time()
+            print("Epoch {}, training loss {:.4f}, time {:.2f}".format(epoch, np.mean(train_losses),
+                                                                       end_time - start_time))
+
+
+# if __name__ == "__main__":
+#     inputs = torch.randn(1, 1, 96, 96, 96)
+#     model = Unet3DModel(in_channels=1, out_channels=1)
+#     x = model(inputs)
+#     print(model)
