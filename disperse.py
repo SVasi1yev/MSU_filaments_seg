@@ -9,6 +9,8 @@ from astropy import units as u
 from sklearn.neighbors import KDTree
 from scipy.spatial import ConvexHull
 import copy
+from pathlib import Path
+import json
 
 # TODO
 # Настройка угла соединения филаментов в рассчете метрик
@@ -96,7 +98,7 @@ class Disperse3D:
         else:
             plt.plot(rads, metrics[sigma][smooth]['true_'+metric], label='true_'+metric)
             plt.plot(rads, metrics[sigma][smooth]['false_'+metric], label='false_'+metric)
-            plt.plot(rads, metrics[sigma][smooth]['diff_'+metric], label='diff_'+metric)
+            plt.plot(rads, metrics[sigma][smooth]['diffdump_'+metric], label='diff_'+metric)
             # plt.hlines(1, min(coefs), max(coefs), color='r', label='total')
             plt.grid()
             plt.xticks(coefs)
@@ -105,6 +107,44 @@ class Disperse3D:
             plt.ylabel(metric)
             plt.legend()
             plt.title(f'true/false/diff {metric}: SIGMA={sigma}, SMOOTH={smooth}')
+
+    @classmethod
+    def read(cls, dir_path):
+        if not dir_path.endswith(os.path.sep):
+            dir_path = dir_path + os.path.sep
+        galaxies = pd.read_csv(dir_path + 'galaxies.csv')
+        if os.path.exists(dir_path + 'clusters.csv'):
+            clusters = pd.read_csv(dir_path + 'clusters.csv')
+        else:
+            clusters = None
+
+        with open(dir_path + 'meta.json') as f:
+            meta = json.load(f)
+
+        with open(dir_path + 'dsp_res.json') as f:
+            dsp_res = json.load(f)
+
+        DPS = cls(
+            galaxies, meta['disperse_path'],
+            meta['cosmo_H0'], meta['cosmo_Om'], meta['cosmo_Ol'], meta['cosmo_Ok'],
+            clusters,
+            meta['sph2cart_f'], meta['cart2sph_f']
+        )
+
+        DPS.CX_int = meta['CX_int']
+        DPS.CY_int = meta['CX_int']
+        DPS.CZ_int = meta['CX_int']
+        DPS.cart_coords = meta['cart_coords']
+        DPS.disperse_sigma = meta['disperse_sigma']
+        DPS.disperse_smooth = meta['disperse_smooth']
+        DPS.disperse_board = meta['disperse_board']
+        DPS.disprese_asmb_angle = meta['disperse_asmb_angle']
+
+        DPS.cps = dsp_res['cps']
+        DPS.fils = dsp_res['fils']
+        DPS.maxs = dsp_res['maxs']
+
+        return DPS
 
     def __init__(
         self, galaxies, disperse_path,
@@ -120,9 +160,6 @@ class Disperse3D:
         sph2cart_f, cart2sph_f - функции перевода координат
         clusters - DataFrame со сферическими координатами скоплений для рассчета метрик
         """
-
-        self.fils = None
-        self.metrics = None
 
         self.disperse_path = disperse_path
         if self.disperse_path[-1] != '/':
@@ -145,6 +182,8 @@ class Disperse3D:
         self.cosmo = FlatLambdaCDM(H0=cosmo_H0, Om0=cosmo_Om)
         self.COORDS_IN = f'{id(self)}_coords_ascii.txt'
         self.DISPERSE_IN = f'{id(self)}_galaxies_ascii.txt'
+
+        self.sph2cart_f = sph2cart_f
         if sph2cart_f == 'min':
             self.sph2cart = self.sph2cart_DTFE_MIN
         elif sph2cart_f == 'dist':
@@ -155,6 +194,7 @@ class Disperse3D:
             print('WRONG shp2cart_f value')
             self.sph2cart = self.sph2cart_DIST
 
+        self.cart2sph_f = cart2sph_f
         if cart2sph_f == 'dist':
             self.cart2sph = self.cart2sph_DIST
         elif cart2sph_f == 'astropy':
@@ -164,16 +204,51 @@ class Disperse3D:
             self.cart2sph = self.cart2sph_DIST
 
         self.cart_coords = False
-        self.apply = False
-
-        self.fils = None
 
         self.disperse_sigma = None
         self.disperse_smooth = None
         self.disperse_board = None
         self.disprese_asmb_angle = None
 
-        self.metrics = None
+        self.cps = None
+        self.fils = None
+        self.maxs = None
+
+    def save(self, dir_path):
+        if not dir_path.endswith(os.path.sep):
+            dir_path = dir_path + os.path.sep
+        Path(dir_path).mkdir(parents=True, exist_ok=True)
+        self.galaxies.to_csv(dir_path + 'galaxies.csv', index=False)
+        if self.clusters is not None:
+            self.clusters.to_csv(dir_path + 'clusters.csv', index=False)
+
+        dsp_res = {
+            'cps': self.cps,
+            'fils': self.fils,
+            'maxs': self.maxs,
+        }
+        with open(dir_path + 'dsp_res.json', 'w') as f:
+            json.dump(dsp_res, f)
+
+        meta = {
+            'disperse_path': self.disperse_path,
+            'CX_int': self.CX_int,
+            'CY_int': self.CY_int,
+            'CZ_int': self.CZ_int,
+            'cosmo_H0': self.cosmo_H0 * 100,
+            'cosmo_Ol': self.cosmo_Ol,
+            'cosmo_Om': self.cosmo_Om,
+            'cosmo_Ok': self.cosmo_Ok,
+            'sph2cart_f': self.sph2cart_f,
+            'cart2sph_f': self.cart2sph_f,
+            'cart_coords': self.cart_coords,
+            'disperse_sigma': self.disperse_sigma,
+            'disperse_smooth': self.disperse_smooth,
+            'disperse_board': self.disperse_board,
+            'disperse_asmb_angle': self.disprese_asmb_angle
+        }
+        with open(dir_path + 'meta.json', 'w') as f:
+            json.dump(meta, f)
 
     def sph2cart_DTFE_MIN(self, ra, dec, z):
         """
@@ -394,7 +469,6 @@ class Disperse3D:
         """
 
         self.fils = None
-        self.metrics = None
 
         self.disperse_sigma = disperse_sigma if disperse_sigma != int(disperse_sigma) else int(disperse_sigma)
         self.disperse_smooth = disperse_smooth
@@ -430,18 +504,17 @@ class Disperse3D:
         print(">>> skelconv starts")
         os.system((
             f'{self.disperse_path}skelconv {self.DISPERSE_IN}.NDnet_s{self.disperse_sigma}.up.NDskl '
-            f'-breakdown -to NDskl_ascii {f"-assemble 0 {self.disprese_asmb_angle}"} -toRaDecZ '
+            f'-breakdown -to NDskl_ascii -toRaDecZ '
             f'-cosmo {self.cosmo_Om} {self.cosmo_Ol} {self.cosmo_Ok} {self.cosmo_H0} {-1.0}'
         ))
+        # {f"-assemble 0 {self.disprese_asmb_angle}"}
 
         print(">>> read_skl_ascii_RaDecZ starts")
         self.read_skl_ascii_RaDecZ(
-            f'{self.DISPERSE_IN}.NDnet_s{self.disperse_sigma}.up.NDskl.BRK.ASMB.RaDecZ.a.NDskl'
+            f'{self.DISPERSE_IN}.NDnet_s{self.disperse_sigma}.up.NDskl.BRK.RaDecZ.a.NDskl'
         )
 
         os.system(f'rm {self.DISPERSE_IN}* test_smooth.dat')
-
-        self.apply=True
 
     def read_skl_ascii_RaDecZ(self, file_name):
         self.cps = []
@@ -602,10 +675,7 @@ class Disperse3D:
 
         if clusters is None:
             clusters = self.clusters
-        if self.metrics is not None:
-            print('Metrics was already computed')
-            return
-        if not self.apply:
+        if self.fils is None:
             print('DisPerSe wasn\'t computed')
             return
         if Disperse3D.random_clusters is None or \
@@ -646,12 +716,12 @@ class Disperse3D:
                 df = df.assign(Z=z)
                 Disperse3D.random_clusters.append(df)
 
-        self.metrics = {}
-        self.metrics['sigma'] = self.disperse_sigma
-        self.metrics['smooth'] = self.disperse_smooth
-        self.metrics['angle'] = self.disprese_asmb_angle
-        self.metrics['mode'] = mode
-        self.metrics['rads'] = rads
+        metrics = {}
+        metrics['sigma'] = self.disperse_sigma
+        metrics['smooth'] = self.disperse_smooth
+        metrics['angle'] = self.disprese_asmb_angle
+        metrics['mode'] = mode
+        metrics['rads'] = rads
 
         cl_num = clusters.shape[0]
         fils_num = len(self.fils)
@@ -709,28 +779,31 @@ class Disperse3D:
         false_f1 = 2 * false_recall * false_precision / (false_recall + false_precision)
         diff_f1 = 2 * diff_recall * diff_precision / (diff_recall + diff_precision)
 
-        self.metrics['cl_num'] = cl_num
-        self.metrics['fils_num'] = fils_num
+        metrics['cl_num'] = cl_num
+        metrics['fils_num'] = fils_num
 
-        self.metrics['true_cl_inter'] = [int(e) for e in true_cl_inter]
-        self.metrics['false_cl_inter'] = [float(e) for e in false_cl_inter]
-        self.metrics['diff_cl_inter'] = [float(e) for e in diff_cl_inter]
+        metrics['true_cl_inter'] = [int(e) for e in true_cl_inter]
+        metrics['false_cl_inter'] = [float(e) for e in false_cl_inter]
+        metrics['diff_cl_inter'] = [float(e) for e in diff_cl_inter]
 
-        self.metrics['true_fils_inter'] = [int(e) for e in true_fils_inter]
-        self.metrics['false_fils_inter'] = [int(e) for e in false_fils_inter]
-        self.metrics['diff_fils_inter'] = [int(e) for e in diff_fils_inter]
+        metrics['true_fils_inter'] = [int(e) for e in true_fils_inter]
+        metrics['false_fils_inter'] = [int(e) for e in false_fils_inter]
+        metrics['diff_fils_inter'] = [int(e) for e in diff_fils_inter]
 
-        self.metrics['true_recall'] = [int(e) for e in true_recall]
-        self.metrics['false_recall'] = [float(e) for e in false_recall]
-        self.metrics['diff_recall'] = [float(e) for e in diff_recall]
+        metrics['true_recall'] = [int(e) for e in true_recall]
+        metrics['false_recall'] = [float(e) for e in false_recall]
+        metrics['diff_recall'] = [float(e) for e in diff_recall]
 
-        self.metrics['true_precision'] = [int(e) for e in true_precision]
-        self.metrics['false_precision'] = [float(e) for e in false_precision]
-        self.metrics['diff_precision'] = [float(e) for e in diff_precision]
+        metrics['true_precision'] = [int(e) for e in true_precision]
+        metrics['false_precision'] = [float(e) for e in false_precision]
+        metrics['diff_precision'] = [float(e) for e in diff_precision]
 
-        self.metrics['true_f1'] = [int(e) for e in true_f1]
-        self.metrics['false_f1'] = [float(e) for e in false_f1]
-        self.metrics['diff_f1'] = [float(e) for e in diff_f1]
+        metrics['true_f1'] = [int(e) for e in true_f1]
+        metrics['false_f1'] = [float(e) for e in false_f1]
+        metrics['diff_f1'] = [float(e) for e in diff_f1]
+
+        return metrics
+
 
     def count_metrics_several_params(self, sigmas, smooths, mode, rads, clusters=None):
         """
@@ -753,8 +826,7 @@ class Disperse3D:
             metrics[sigma] = {}
             for smooth in smooths:
                 self.apply_disperse(sigma, smooth)
-                self.count_metrics(mode, rads, clusters)
-                metrics[sigma][smooth] = copy.deepcopy(self.metrics)
+                metrics[sigma][smooth] = self.count_metrics(mode, rads, clusters)
 
         return metrics
 
