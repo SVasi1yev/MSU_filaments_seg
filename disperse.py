@@ -11,6 +11,7 @@ from scipy.spatial import ConvexHull
 import copy
 from pathlib import Path
 import json
+import time
 
 # TODO
 # Настройка угла соединения филаментов в рассчете метрик
@@ -54,6 +55,34 @@ def intersec_line_sphere(x1, y1, z1, x2, y2, z2, x3, y3, z3, r):
     raise Exception('intersec_line_sphere_ERROR')
 
 
+def dot(x1, y1, z1, x2, y2, z2):
+    return x1*x2 + y1*y2 + z1*z2
+
+
+def dist_point_line(x1, y1, z1, x2, y2, z2, x3, y3, z3):
+    p = np.array([x1, y1, z1])
+    q = np.array([x2, y2, z2])
+    r = np.array([x3, y3, z3])
+
+    def t(p, q, r):
+        x = p - q
+        return np.dot(r - q, x) / np.dot(x, x)
+
+    return np.linalg.norm(t(p, q, r) * (p - q) + q - r)
+
+
+def dist_point_section(x1, y1, z1, x2, y2, z2, x3, y3, z3):
+    v = [x2 - x1, y2 - y1, z2 - z1]
+    w0 = [x3 - x1, y3 - y1, z3 - z1]
+    w1 = [x3 - x2, y3 - y2, z3 - z2]
+    if np.dot(w0, v) <= 0:
+        return dist(x3, y3, z3, x1, y1, z1)
+    elif np.dot(w1, v) >= 0:
+        return dist(x3, y3, z3, x2, y2, z2)
+    else:
+        return dist_point_line(x1, y1, z1, x2, y2, z2, x3, y3, z3)
+
+
 class Disperse3D:
     RANDOM_CLUSTERS_NUM = 5
     random_clusters = None
@@ -66,8 +95,8 @@ class Disperse3D:
 
         font = {'size': 16}
         plt.rc('font', **font)
-        coefs = metrics['COEFS']
-        fig = plt.figure(figsize=(18, 12))
+        coefs = metrics['rads']
+        fig = plt.figure(figsize=(18, 18))
         rads = metrics['rads']
         if mode == 'overall':
             i = 0
@@ -82,12 +111,13 @@ class Disperse3D:
                     if i % 3 == 2:
                         linestyle = ':'
                         linewidth = 4
-                    m = metrics[sigma][smooth][metric]
+                    m = metrics[str(sigma)][str(smooth)][metric]
                     plt.plot(
                         rads, m, linestyle=linestyle, linewidth=linewidth,
-                        label=f'{m}_SIGMA={sigma}_SMOOTH={smooth}'
+                        label=f'{metric}_SIGMA={sigma}_SMOOTH={smooth}'
                     )
             # plt.hline() # TODO
+            plt.hlines(1, min(rads), max(rads), color='r', label='total')
             plt.grid()
             plt.xticks(coefs)
             # plt.yticks(np.arange(0.0, 1.1, 0.1)) # TODO
@@ -98,7 +128,7 @@ class Disperse3D:
         else:
             plt.plot(rads, metrics[sigma][smooth]['true_'+metric], label='true_'+metric)
             plt.plot(rads, metrics[sigma][smooth]['false_'+metric], label='false_'+metric)
-            plt.plot(rads, metrics[sigma][smooth]['diffdump_'+metric], label='diff_'+metric)
+            plt.plot(rads, metrics[sigma][smooth]['diff_'+metric], label='diff_'+metric)
             # plt.hlines(1, min(coefs), max(coefs), color='r', label='total')
             plt.grid()
             plt.xticks(coefs)
@@ -630,6 +660,7 @@ class Disperse3D:
 
         cl_conn = [0] * clusters.shape[0]
         fils_conn = [0] * len(self.fils)
+        cl_min_dist = [0] * clusters.shape[0]
 
         CX = clusters['CX']
         CY = clusters['CY']
@@ -661,7 +692,66 @@ class Disperse3D:
                     fils_conn[fil_num[p_idx]] += 1
                     proc_fils.add(fil_num[p_idx])
 
-        return cl_conn, fils_conn
+            close_points_idx = kd_tree.query([[x3, y3, z3]], k=20, return_distance=False)
+            min_dist = 1e10
+            for p_idx in close_points_idx[0]:
+                if next_point[p_idx] is None:
+                    continue
+                x1, y1, z1 = tuple(points[p_idx])
+                x2, y2, z2 = tuple(points[next_point[p_idx]])
+                d = dist_point_section(x1, y1, z1, x2, y2, z2, x3, y3, z3)
+                if d < min_dist:
+                    min_dist = d
+            cl_min_dist[i] = min_dist
+
+        return cl_conn, fils_conn, cl_min_dist
+
+    def gen_random_clusters(self, clusters=None):
+        if clusters is None:
+            clusters = self.clusters
+        if Disperse3D.random_clusters is None or \
+                Disperse3D.random_clusters[0].shape[0] != clusters.shape[0]:
+            print('>>> Generate random clusters')
+            CX_int = (self.galaxies['CX'].min(), self.galaxies['CX'].max())
+            CY_int = (self.galaxies['CY'].min(), self.galaxies['CY'].max())
+            CZ_int = (self.galaxies['CZ'].min(), self.galaxies['CZ'].max())
+
+            points = np.array(self.galaxies[['CX', 'CY', 'CZ']])
+            hull = ConvexHull(points)
+            A, b = hull.equations[:, :-1], hull.equations[:, -1:]
+            EPS = -5
+
+            def contained(x):
+                return np.all(np.asarray(x) @ A.T + b.T < EPS, axis=1)
+
+            np.random.seed(0)
+
+            Disperse3D.random_clusters = []
+            for i in range(Disperse3D.RANDOM_CLUSTERS_NUM):
+                CX, CY, CZ = [], [], []
+                for j in tqdm(range(clusters.shape[0])):
+                    fl = False
+                    while not fl:
+                        cx = np.random.uniform(CX_int[0], CX_int[1], 1)[0]
+                        cy = np.random.uniform(CY_int[0], CY_int[1], 1)[0]
+                        cz = np.random.uniform(CZ_int[0], CZ_int[1], 1)[0]
+                        fl = contained([[cx, cy, cz]])
+                    CX.append(cx)
+                    CY.append(cy)
+                    CZ.append(cz)
+                CX = np.random.uniform(CX_int[0], CX_int[1], self.clusters.shape[0])
+                CY = np.random.uniform(CY_int[0], CY_int[1], self.clusters.shape[0])
+                CZ = np.random.uniform(CZ_int[0], CZ_int[1], self.clusters.shape[0])
+                df = pd.DataFrame()
+                df = df.assign(CX=CX)
+                df = df.assign(CY=CY)
+                df = df.assign(CZ=CZ)
+                ra, dec, z = self.cart2sph(CX, CY, CZ)
+                df = df.assign(RA=ra)
+                df = df.assign(DEC=dec)
+                df = df.assign(Z=z)
+                df = df.assign(R=self.clusters['R'])
+                Disperse3D.random_clusters.append(df)
 
     def count_metrics(self, mode, rads, clusters=None):
         """
@@ -678,43 +768,7 @@ class Disperse3D:
         if self.fils is None:
             print('DisPerSe wasn\'t computed')
             return
-        if Disperse3D.random_clusters is None or \
-                Disperse3D.random_clusters[0].shape[0] != clusters.shape[0]:
-            CX_int = (self.galaxies['CX'].min(), self.galaxies['CX'].max())
-            CY_int = (self.galaxies['CY'].min(), self.galaxies['CY'].max())
-            CZ_int = (self.galaxies['CZ'].min(), self.galaxies['CZ'].max())
-
-            points = np.array(self.galaxies[['CX', 'CY', 'CZ']])
-            hull = ConvexHull(points)
-            A, b = hull.equations[:, :-1], hull.equations[:, -1:]
-            EPS = -5
-
-            def contained(x):
-                return np.all(np.asarray(x) @ A.T + b.T < EPS, axis=1)
-
-            np.random.seed(0)
-
-            for i in range(Disperse3D.RANDOM_CLUSTERS_NUM):
-                CX, CY, CZ = [], [], []
-                for j in tqdm(range(clusters.shape[0])):
-                    fl = False
-                    while not fl:
-                        cx = np.random.uniform(CX_int[0], CX_int[1], 1)[0]
-                        cy = np.random.uniform(CY_int[0], CY_int[1], 1)[0]
-                        cz = np.random.uniform(CZ_int[0], CZ_int[1], 1)[0]
-                        fl = contained([[cx, cy, cz]])
-                    CX.append(cx)
-                    CY.append(cy)
-                    CZ.append(cz)
-                df = pd.DataFrame()
-                df = df.assign(CX=CX)
-                df = df.assign(CY=CY)
-                df = df.assign(CZ=CZ)
-                ra, dec, z = self.cart2shp_ASTROPY(CX, CY, CZ)
-                df = df.assign(RA=ra)
-                df = df.assign(DEC=dec)
-                df = df.assign(Z=z)
-                Disperse3D.random_clusters.append(df)
+        self.gen_random_clusters(clusters)
 
         metrics = {}
         metrics['sigma'] = self.disperse_sigma
@@ -728,44 +782,54 @@ class Disperse3D:
 
         true_cl_inter = []
         true_fils_inter = []
+        true_cl_conns = []
         for rad in tqdm(rads):
             if mode == 'coefs':
-                cl_conn, fils_conn = self.count_conn(
+                cl_conn, fils_conn, _ = self.count_conn(
                     self.clusters['R'] * rad,
                     clusters
                 )
             else:
-                cl_conn, fils_conn = self.count_conn(
+                cl_conn, fils_conn, _ = self.count_conn(
                     [rad] * self.clusters.shape[0],
                     clusters
                 )
             true_cl_inter.append(sum(list(map(lambda x: int(x > 0), cl_conn))))
             true_fils_inter.append(sum(list(map(lambda x: int(x > 0), fils_conn))))
+            true_cl_conns.append(sum(cl_conn))
         true_cl_inter = np.array(true_cl_inter)
         true_fils_inter = np.array(true_fils_inter)
+        true_cl_conns = np.array(true_cl_conns)
 
         false_cl_inter = []
         false_fils_inter = []
+        false_cl_conns = []
         for i in tqdm(range(Disperse3D.RANDOM_CLUSTERS_NUM)):
             false_cl_inter.append([])
             false_fils_inter.append([])
+            false_cl_conns.append([])
             for rad in rads:
                 if mode == 'coefs':
-                    cl_conn, fils_conn = self.count_conn(
-                        Disperse3D.random_clusters[i]['R'] * rad
+                    cl_conn, fils_conn, _ = self.count_conn(
+                        Disperse3D.random_clusters[i]['R'] * rad,
+                        Disperse3D.random_clusters[i]
                     )
                 else:
-                    cl_conn, fils_conn = self.count_conn(
-                        [rad] * Disperse3D.random_clusters[i]['R']
+                    cl_conn, fils_conn, _ = self.count_conn(
+                        [rad] * Disperse3D.random_clusters[i].shape[0],
+                        Disperse3D.random_clusters[i]
                     )
                 false_cl_inter[i].append(sum(list(map(lambda x: int(x > 0), cl_conn))))
                 false_fils_inter[i].append(sum(list(map(lambda x: int(x > 0), fils_conn))))
+                false_cl_conns[i].append(sum(cl_conn))
 
         false_cl_inter = np.array(false_cl_inter).mean(0)
         false_fils_inter = np.array(false_fils_inter).mean(0)
+        false_cl_conns = np.array(false_cl_conns).mean(0)
 
         diff_cl_inter = true_cl_inter - false_cl_inter
         diff_fils_inter = true_fils_inter - false_fils_inter
+        diff_cl_conns = true_cl_conns - false_cl_conns
 
         true_recall = true_cl_inter / cl_num
         false_recall = false_cl_inter / cl_num
@@ -786,6 +850,10 @@ class Disperse3D:
         metrics['false_cl_inter'] = [float(e) for e in false_cl_inter]
         metrics['diff_cl_inter'] = [float(e) for e in diff_cl_inter]
 
+        metrics['true_cl_conns'] = [int(e) for e in true_cl_conns]
+        metrics['false_cl_conns'] = [int(e) for e in false_cl_conns]
+        metrics['diff_cl_conns'] = [int(e) for e in diff_cl_conns]
+
         metrics['true_fils_inter'] = [int(e) for e in true_fils_inter]
         metrics['false_fils_inter'] = [int(e) for e in false_fils_inter]
         metrics['diff_fils_inter'] = [int(e) for e in diff_fils_inter]
@@ -803,7 +871,6 @@ class Disperse3D:
         metrics['diff_f1'] = [float(e) for e in diff_f1]
 
         return metrics
-
 
     def count_metrics_several_params(self, sigmas, smooths, mode, rads, clusters=None):
         """
