@@ -36,6 +36,11 @@ def intersec_line_sphere(x1, y1, z1, x2, y2, z2, x3, y3, z3, r):
     c = x3**2 + y3**2 + z3**2 + x1**2 + y1**2 + z1**2 \
         - 2 * (x3*x1 + y3*y1 + z3*z1) - r**2
     d = b**2 - 4*a*c
+    if a == 0:
+        if dist(x1, y1, z1, x3, y3, z3) <= r:
+            return True
+        else:
+            return False
     if d < 0:
         return False
     if d == 0:
@@ -666,7 +671,7 @@ class Disperse3D:
         CY = clusters['CY']
         CZ = clusters['CZ']
 
-        for i in range(self.clusters.shape[0]):
+        for i in range(clusters.shape[0]):
             x3 = CX[i]
             y3 = CY[i]
             z3 = CZ[i]
@@ -674,23 +679,23 @@ class Disperse3D:
 
             proc_fils = set()
 
-            close_points_idx = kd_tree.query_radius([[x3, y3, z3]], r=r_fil + MIN_SEG_LEN + 1)
-            for p_idx in close_points_idx[0]:
-                if fil_num[p_idx] in proc_fils:
-                    continue
-                if next_point[p_idx] is None:
-                    continue
-                x1, y1, z1 = tuple(points[p_idx])
-                x2, y2, z2 = tuple(points[next_point[p_idx]])
-                if intersec_line_sphere(
-                    x1, y1, z1,
-                    x2, y2, z2,
-                    x3, y3, z3,
-                    r_fil
-                ):
-                    cl_conn[i] += 1
-                    fils_conn[fil_num[p_idx]] += 1
-                    proc_fils.add(fil_num[p_idx])
+            # close_points_idx = kd_tree.query_radius([[x3, y3, z3]], r=r_fil + MIN_SEG_LEN + 1)
+            # for p_idx in close_points_idx[0]:
+            #     if fil_num[p_idx] in proc_fils:
+            #         continue
+            #     if next_point[p_idx] is None:
+            #         continue
+            #     x1, y1, z1 = tuple(points[p_idx])
+            #     x2, y2, z2 = tuple(points[next_point[p_idx]])
+            #     if intersec_line_sphere(
+            #         x1, y1, z1,
+            #         x2, y2, z2,
+            #         x3, y3, z3,
+            #         r_fil
+            #     ):
+            #         cl_conn[i] += 1
+            #         fils_conn[fil_num[p_idx]] += 1
+            #         proc_fils.add(fil_num[p_idx])
 
             close_points_idx = kd_tree.query([[x3, y3, z3]], k=20, return_distance=False)
             min_dist = 1e10
