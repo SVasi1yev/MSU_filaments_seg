@@ -204,9 +204,9 @@ class Disperse3D:
             self.clusters = clusters.copy()
         else:
             self.clusters = None
-        self.ra_int = (self.galaxies['RA'].min() - 5, self.galaxies['RA'].max() + 5)
-        self.dec_int = (self.galaxies['DEC'].min() - 5, self.galaxies['DEC'].max() + 5)
-        self.z_int = (self.galaxies['Z'].min() - 0.002, self.galaxies['Z'].max() + 0.002)
+        self.ra_int = (self.galaxies['RA'].min(), self.galaxies['RA'].max())
+        self.dec_int = (self.galaxies['DEC'].min(), self.galaxies['DEC'].max())
+        self.z_int = (self.galaxies['Z'].min(), self.galaxies['Z'].max())
         self.CX_int = None
         self.CY_int = None
         self.CZ_int = None
@@ -375,8 +375,15 @@ class Disperse3D:
 
         ra, dec, dist = [], [], []
         for i in range(len(CX)):
-            ra.append(np.arctan(CY[i] / CX[i]))
-            dec.append(np.arctan((CX[i]**2 + CY[i]**2)**0.5 / CZ[i]))
+            if CX[i] == 0 and CY[i] > 0:
+                ra.append(90)
+            elif CX[i] == 0 and CY[i] < 0:
+                ra.append(270)
+            elif CX[i] == 0 and CY[i] == 0:
+                ra.append(0)
+            else:
+                ra.append(int(CX[i] < 0) * 180 + np.arctan(CY[i] / CX[i]) * 180 / np.pi)
+            dec.append(90 - np.arctan((CX[i]**2 + CY[i]**2)**0.5 / CZ[i]) * 180 / np.pi)
             dist.append((CX[i]**2 + CY[i]**2 + CZ[i]**2)**0.5)
 
         with open(self.COORDS_IN, 'w') as f:
@@ -661,7 +668,7 @@ class Disperse3D:
             count += 1
             next_point.append(None)
 
-        kd_tree = KDTree(points, leaf_size=2)
+        kd_tree = KDTree(points, leaf_size=10)
 
         cl_conn = [0] * clusters.shape[0]
         fils_conn = [0] * len(self.fils)
@@ -717,44 +724,57 @@ class Disperse3D:
         if Disperse3D.random_clusters is None or \
                 Disperse3D.random_clusters[0].shape[0] != clusters.shape[0]:
             print('>>> Generate random clusters')
-            CX_int = (self.galaxies['CX'].min(), self.galaxies['CX'].max())
-            CY_int = (self.galaxies['CY'].min(), self.galaxies['CY'].max())
-            CZ_int = (self.galaxies['CZ'].min(), self.galaxies['CZ'].max())
+            RA_int = (self.clusters['RA'].min(), self.clusters['RA'].max())
+            DEC_int = (self.clusters['DEC'].min(), self.clusters['DEC'].max())
+            Z_int = (self.clusters['Z'].min(), np.quantile(self.clusters['Z'], [0.97])[0])
+            CX_int = (self.clusters['CX'].min(), self.clusters['CX'].max())
+            CY_int = (self.clusters['CY'].min(), self.clusters['CY'].max())
+            CZ_int = (self.clusters['CZ'].min(), self.clusters['CZ'].max())
 
-            points = np.array(self.galaxies[['CX', 'CY', 'CZ']])
-            hull = ConvexHull(points)
-            A, b = hull.equations[:, :-1], hull.equations[:, -1:]
-            EPS = -5
-
-            def contained(x):
-                return np.all(np.asarray(x) @ A.T + b.T < EPS, axis=1)
+            # points = np.array(self.galaxies[['CX', 'CY', 'CZ']])
+            # hull = ConvexHull(points)
+            # A, b = hull.equations[:, :-1], hull.equations[:, -1:]
+            # EPS = -5
+            #
+            # def contained(x):
+            #     return np.all(np.asarray(x) @ A.T + b.T < EPS, axis=1)
 
             np.random.seed(0)
 
             Disperse3D.random_clusters = []
             for i in range(Disperse3D.RANDOM_CLUSTERS_NUM):
-                CX, CY, CZ = [], [], []
-                for j in tqdm(range(clusters.shape[0])):
-                    fl = False
-                    while not fl:
-                        cx = np.random.uniform(CX_int[0], CX_int[1], 1)[0]
-                        cy = np.random.uniform(CY_int[0], CY_int[1], 1)[0]
-                        cz = np.random.uniform(CZ_int[0], CZ_int[1], 1)[0]
-                        fl = contained([[cx, cy, cz]])
-                    CX.append(cx)
-                    CY.append(cy)
-                    CZ.append(cz)
-                CX = np.random.uniform(CX_int[0], CX_int[1], self.clusters.shape[0])
-                CY = np.random.uniform(CY_int[0], CY_int[1], self.clusters.shape[0])
-                CZ = np.random.uniform(CZ_int[0], CZ_int[1], self.clusters.shape[0])
+                # CX, CY, CZ = [], [], []
+                RA, DEC, Z = [], [], []
+                # for j in tqdm(range(clusters.shape[0])):
+                    # fl = False
+                    # while not fl:
+                    #     cx = np.random.uniform(CX_int[0], CX_int[1], 1)[0]
+                    #     cy = np.random.uniform(CY_int[0], CY_int[1], 1)[0]
+                    #     cz = np.random.uniform(CZ_int[0], CZ_int[1], 1)[0]
+                    #     ra, dec, z = self.cart2sph([cx], [cy], [cz])
+                    #     # print(ra[0], dec[0], z[0])
+                    #     fl = RA_int[0] <= ra[0] <= RA_int[1] \
+                    #         and DEC_int[0] <= dec[0] <= DEC_int[1] \
+                    #         and Z_int[0] <= z[0] <= Z_int[1]
+                    #     # fl = contained([[cx, cy, cz]])
+                    # CX.append(cx)
+                    # CY.append(cy)
+                    # CZ.append(cz)
+                RA = np.random.uniform(RA_int[0], RA_int[1], clusters.shape[0])
+                DEC = np.random.uniform(DEC_int[0], DEC_int[1], clusters.shape[0])
+                Z = np.random.uniform(Z_int[0], Z_int[1], clusters.shape[0])
                 df = pd.DataFrame()
+                # df = df.assign(CX=CX)
+                # df = df.assign(CY=CY)
+                # df = df.assign(CZ=CZ)
+                # RA, DEC, Z = self.cart2sph(CX, CY, CZ)
+                df = df.assign(RA=RA)
+                df = df.assign(DEC=DEC)
+                df = df.assign(Z=Z)
+                CX, CY, CZ = self.sph2cart(RA, DEC, Z)
                 df = df.assign(CX=CX)
                 df = df.assign(CY=CY)
                 df = df.assign(CZ=CZ)
-                ra, dec, z = self.cart2sph(CX, CY, CZ)
-                df = df.assign(RA=ra)
-                df = df.assign(DEC=dec)
-                df = df.assign(Z=z)
                 df = df.assign(R=self.clusters['R'])
                 Disperse3D.random_clusters.append(df)
 
