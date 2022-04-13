@@ -7,34 +7,65 @@ import numpy as np
 import time
 
 
+class CNNDataset(Dataset):
+    def __init__(self, clusters_ext):
+        self.clusters_ext = clusters_ext
+        self.ids = sorted(clusters_ext['ID'].unique())
+        self.feas = [
+            #             'logreg_score',
+            #             'boosting_score',
+            'rf_score'
+        ]
+
+    def __len__(self):
+        return len(self.ids)
+
+    def __getitem__(self, idx):
+        id_ = self.ids[idx]
+
+        out = []
+        for f in self.feas:
+            out.append(self.clusters_ext[self.clusters_ext['ID'] == id_][f])
+
+        X = np.array(out)
+        Y = self.clusters_ext[self.clusters_ext['ID'] == id_]['type'].iloc[0]
+
+        return X, Y
+
+
 class CNN(nn.Module):
     def __init__(self, n_channels):
         super(CNN, self).__init__()
         self.n_channels = n_channels
 
-        self.conv01 = nn.Conv1d(
-            in_channels=self.n_channels, out_channels=3,
-            kernel_size=5, stride=3
-        )
-        self.act01 = nn.ReLU()
-        self.conv02 = nn.Conv1d(
-            in_channels=3, out_channels=1,
-            kernel_size=3, stride=1
+        self.features = nn.Sequential(
+            nn.Conv1d(
+                in_channels=self.n_channels, out_channels=1,
+                kernel_size=3, stride=1
+            ),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            #             nn.Conv1d(
+            #                 in_channels=3, out_channels=3,
+            #                 kernel_size=3, stride=1
+            #             ),
+            #             nn.ReLU(),
+            #             nn.MaxPool1d(2)
         )
 
-        self.fc01 = nn.Linear(in_features=1000, out_features=256)
-        self.act02 = nn.ReLU()
-        self.fc02 = nn.Linear(in_features=256, out_features=32)
+        self.clf = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(248, 2),
+            #             nn.ReLU(),
+            #             nn.Dropout(0.5),
+            #             nn.Linear(32, 1),
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
-        x = self.conv01(x)
-        x = self.act01(x)
-        x = self.conv02(x)
-        x = x.reshape(x.size(0), -1)
-        x = self.fc01(x)
-        x = self.act02(x)
-        x = self.fc02(x)
-        out = F.sigmoid(x)
+        x = self.features(x)
+        x = torch.flatten(x, 1)
+        out = self.clf(x)
 
         return out
 
@@ -67,18 +98,20 @@ def train(train_dataloader, test_dataloader, net, optimizer, criterion, n_epochs
         train_losses = []
         for X, Y in train_dataloader:
             X = X.float()
-            optimizer.zero_grad()
             preds = net(X)
-            loss = criterion(preds, Y)
+            Y_ = torch.zeros((Y.size(0), 2))
+            Y_[:, Y] = 1
+            loss = criterion(preds, Y_)
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             train_losses.append(loss.item())
         test_preds, test_Y = [], []
         for X, Y in test_dataloader:
             X = X.float()
-            optimizer.zero_grad()
             preds = net(X)
-            test_preds.append(preds)
+            preds = preds.argmax(axis=1)
+            test_preds.append(preds.reshape(-1))
             test_Y.append(Y)
         test_preds = torch.cat(test_preds).cpu().detach().numpy()
         test_Y = torch.cat(test_Y).cpu().detach().numpy()
@@ -90,3 +123,12 @@ def train(train_dataloader, test_dataloader, net, optimizer, criterion, n_epochs
                 end_time - start_time
             )
         )
+
+# cnn = CNN(1)
+# w = torch.Tensor([0.15, 0.85])
+# criterion = torch.nn.BCELoss(w)
+# optimizer = torch.optim.Adam(cnn.parameters(),lr=0.001)
+# train(
+#     train_dataloader, test_dataloader,
+#     cnn, optimizer, criterion, 30
+# )
