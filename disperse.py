@@ -101,7 +101,7 @@ class Disperse3D:
         font = {'size': 16}
         plt.rc('font', **font)
         coefs = metrics['rads']
-        fig = plt.figure(figsize=(18, 18))
+        fig = plt.figure(figsize=(18, 10))
         rads = metrics['rads']
         if mode == 'overall':
             i = 0
@@ -122,7 +122,7 @@ class Disperse3D:
                         label=f'{metric}_SIGMA={sigma}_SMOOTH={smooth}'
                     )
             # plt.hline() # TODO
-            plt.hlines(1, min(rads), max(rads), color='r', label='total')
+            plt.hlines(1, min(rads), max(rads), color='r')#, label='total')
             plt.grid()
             plt.xticks(coefs)
             # plt.yticks(np.arange(0.0, 1.1, 0.1)) # TODO
@@ -547,6 +547,7 @@ class Disperse3D:
         os.system((
             f'{self.disperse_path}skelconv {self.DISPERSE_IN}.NDnet_s{self.disperse_sigma}.up.NDskl '
             f'-breakdown -to NDskl_ascii -toRaDecZ '
+            # f'-assemble 0 {self.disprese_asmb_angle} '
             f'-cosmo {self.cosmo_Om} {self.cosmo_Ol} {self.cosmo_Ok} {self.cosmo_H0} {-1.0}'
         ))
         # {f"-assemble 0 {self.disprese_asmb_angle}"}
@@ -704,7 +705,7 @@ class Disperse3D:
             #         fils_conn[fil_num[p_idx]] += 1
             #         proc_fils.add(fil_num[p_idx])
 
-            close_points_idx = kd_tree.query([[x3, y3, z3]], k=20, return_distance=False)
+            close_points_idx = kd_tree.query([[x3, y3, z3]], k=1, return_distance=False)
             min_dist = 1e10
             for p_idx in close_points_idx[0]:
                 if next_point[p_idx] is None:
@@ -883,15 +884,15 @@ class Disperse3D:
         metrics['false_fils_inter'] = [int(e) for e in false_fils_inter]
         metrics['diff_fils_inter'] = [int(e) for e in diff_fils_inter]
 
-        metrics['true_recall'] = [int(e) for e in true_recall]
+        metrics['true_recall'] = [float(e) for e in true_recall]
         metrics['false_recall'] = [float(e) for e in false_recall]
         metrics['diff_recall'] = [float(e) for e in diff_recall]
 
-        metrics['true_precision'] = [int(e) for e in true_precision]
+        metrics['true_precision'] = [float(e) for e in true_precision]
         metrics['false_precision'] = [float(e) for e in false_precision]
         metrics['diff_precision'] = [float(e) for e in diff_precision]
 
-        metrics['true_f1'] = [int(e) for e in true_f1]
+        metrics['true_f1'] = [float(e) for e in true_f1]
         metrics['false_f1'] = [float(e) for e in false_f1]
         metrics['diff_f1'] = [float(e) for e in diff_f1]
 
